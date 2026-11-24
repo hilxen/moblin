@@ -13,10 +13,15 @@ extension Model {
 
     func reloadLocation() {
         locationManager.stop()
+        headingManager?.stop()
         if isLocationEnabled() {
             locationManager.start(accuracy: database.location.desiredAccuracy,
                                   distanceFilter: database.location.distanceFilter,
                                   onUpdate: handleLocationUpdate)
+            // Fallback heading source for the server-side map overlay telemetry —
+            // see handleLocationUpdate() below. Harmless/no-op on a device without
+            // the needed sensors (HeadingManager checks availability itself).
+            headingManager?.start()
         }
         reloadRealtimeIrl()
     }
@@ -166,5 +171,26 @@ extension Model {
             return
         }
         realtimeIrl?.update(location: location)
+        sendTelemetryIfDue(location: location)
+    }
+
+    /// Throttles telemetry pushes to the server-side map overlay bridge to a fixed
+    /// rate (independent of this device's actual GPS update interval, which varies
+    /// with distanceFilter/accuracy settings and real-world movement) — see
+    /// RemoteControlTelemetry's docs for why capturedAt needs a clock-offset
+    /// correction applied here, not assumed correct downstream.
+    private func sendTelemetryIfDue(location: CLLocation) {
+        let now = Date()
+        if let lastTelemetrySentAt, now.timeIntervalSince(lastTelemetrySentAt) < telemetryMinIntervalS {
+            return
+        }
+        lastTelemetrySentAt = now
+        let data = RemoteControlTelemetry(
+            location: RemoteControlRemoteSceneDataLocation(location: location),
+            deviceHeadingDegrees: headingManager?.getLatest(),
+            horizontalAccuracy: location.horizontalAccuracy,
+            capturedAt: remoteControlStreamer?.correctedCapturedAt(localCapturedAt: now) ?? now
+        )
+        remoteControlStreamer?.sendTelemetry(data: data)
     }
 }

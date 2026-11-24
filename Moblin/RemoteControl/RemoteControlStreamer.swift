@@ -111,6 +111,12 @@ class RemoteControlStreamer {
     private let keepAliveTimer = MainTimer()
     private var gotPong = true
     private var wrongPassword = false
+    /// Estimated (server clock - phone clock), via a Cristian's-algorithm round trip
+    /// on each ping/pong — see the pong case in handleMessage(). Applied to every
+    /// outgoing telemetry sample's capturedAt so the assistant/server never has to
+    /// do its own clock-offset math; starts at 0 (no correction) until the first
+    /// pong arrives.
+    private var clockOffsetS: TimeInterval = 0
     private let streamerId: String
 
     init(clientUrl: URL,
@@ -206,6 +212,20 @@ class RemoteControlStreamer {
         send(message: .event(data: .icon(id: id)))
     }
 
+    func sendTelemetry(data: RemoteControlTelemetry) {
+        guard connected else {
+            return
+        }
+        send(message: .event(data: .telemetry(data: data)))
+    }
+
+    /// `capturedAt` should be this phone's own local clock reading at the moment the
+    /// location/heading sample was captured — this applies the current clock-offset
+    /// estimate to produce the server-time-corrected value the wire struct expects.
+    func correctedCapturedAt(localCapturedAt: Date = Date()) -> Date {
+        localCapturedAt.addingTimeInterval(clockOffsetS)
+    }
+
     func sendPreview(preview: Data) {
         send(message: .preview(preview: preview))
     }
@@ -234,7 +254,7 @@ class RemoteControlStreamer {
             }
             if gotPong {
                 gotPong = false
-                send(message: .ping)
+                send(message: .ping(sentAt: Date()))
             } else {
                 logger.info("remote-control-streamer: Pong not received")
                 startInternal()
@@ -267,8 +287,22 @@ class RemoteControlStreamer {
                 }
             case let .request(id: id, data: data):
                 handleRequest(id: id, data: data)
-            case .pong:
+            case let .pong(echoedSentAt: echoedSentAt, repliedAt: repliedAt):
                 gotPong = true
+                // Cristian's algorithm: t0 = echoedSentAt (our own send, our clock),
+                // t3 = now (our own receipt, our clock), both in the phone's clock
+                // domain, so (t0+t3)/2 is this phone's own estimate of "now" at the
+                // moment the assistant's repliedAt was its own clock reading.
+                // offset = repliedAt - thatEstimate = how far ahead the server
+                // clock is. Ignore replies far outside a sane RTT (e.g. after an
+                // app suspend/resume) rather than let one stale round trip corrupt
+                // the estimate.
+                let t3 = Date()
+                let rtt = t3.timeIntervalSince(echoedSentAt)
+                if rtt >= 0, rtt < 10 {
+                    let phoneEstimateAtReply = echoedSentAt.addingTimeInterval(rtt / 2)
+                    clockOffsetS = repliedAt.timeIntervalSince(phoneEstimateAtReply)
+                }
             }
         } catch {
             logger.info("remote-control-streamer: Decode failed")

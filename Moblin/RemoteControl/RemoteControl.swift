@@ -139,6 +139,7 @@ enum RemoteControlEvent: Codable {
     case stats(data: RemoteControlStats)
     case wheelOfLuck(wheel: RemoteControlWheelOfLuck?)
     case icon(id: String)
+    case telemetry(data: RemoteControlTelemetry)
 }
 
 struct RemoteControlWheelOfLuckOption: Codable, Equatable {
@@ -889,6 +890,24 @@ struct RemoteControlRemoteSceneDataLocation: Codable {
     }
 }
 
+/// Server-side heads-up map overlay feed: location (lat/lon/course/speed, reusing
+/// RemoteControlRemoteSceneDataLocation's shape) plus a device-motion-derived heading
+/// fallback for when GPS course is unreliable (stationary, or too slow to have a
+/// meaningful course). `capturedAt` is the phone's best estimate of *server* wall-clock
+/// time at capture — already corrected for clock offset using the ping/pong round-trip
+/// (see RemoteControlStreamer's `clockOffsetS`), not the phone's raw local clock. This
+/// lets the server-side compositor align a telemetry sample to a specific video frame's
+/// own wall-clock timestamp without needing to do any clock math itself.
+struct RemoteControlTelemetry: Codable {
+    let location: RemoteControlRemoteSceneDataLocation
+    /// CMDeviceMotion-derived heading in degrees, true-north-relative, or nil if
+    /// unavailable. Fallback only — GPS course (location.course) is preferred
+    /// whenever speed indicates it's meaningful.
+    let deviceHeadingDegrees: Double?
+    let horizontalAccuracy: Double
+    let capturedAt: Date
+}
+
 struct RemoteControlStatusItem: Codable {
     var message: String
     var ok: Bool = true
@@ -1478,7 +1497,12 @@ enum RemoteControlMessageToStreamer: Codable {
     case hello(apiVersion: String, authentication: RemoteControlAuthentication)
     case identified(result: RemoteControlResult)
     case request(id: Int, data: RemoteControlRequest)
-    case pong
+    /// `echoedSentAt` is the streamer's own `ping(sentAt:)` value echoed back verbatim;
+    /// `repliedAt` is the assistant's (server's) clock at reply time. Together with the
+    /// streamer's own send/receive timestamps this is enough for the streamer to run a
+    /// Cristian's-algorithm-style clock-offset/RTT estimate — see
+    /// RemoteControlStreamer's pong handler.
+    case pong(echoedSentAt: Date, repliedAt: Date)
 
     func toJson() -> String? {
         do {
@@ -1502,7 +1526,7 @@ enum RemoteControlMessageToAssistant: Codable {
     case event(data: RemoteControlEvent)
     case preview(preview: Data)
     case twitchStart(channelName: String?, channelId: String, accessToken: String)
-    case ping
+    case ping(sentAt: Date)
 
     func toJson() throws -> String {
         guard let encoded = try String(bytes: JSONEncoder().encode(self), encoding: .utf8) else {

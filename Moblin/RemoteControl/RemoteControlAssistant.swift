@@ -619,8 +619,8 @@ class RemoteControlAssistant: NSObject {
                     channelId: channelId,
                     accessToken: accessToken
                 )
-            case .ping:
-                handlePing()
+            case let .ping(sentAt: sentAt):
+                handlePing(sentAt: sentAt)
             }
         } catch {
             logger.debug("remote-control-assistant: Failed to process message with error \(error)")
@@ -666,6 +666,12 @@ class RemoteControlAssistant: NSObject {
             break
         case let .stats(data: data):
             delegate?.remoteControlAssistantStats(data: data)
+        case .telemetry:
+            // Phone-to-phone remote control (this Swift assistant role) has no use
+            // for another phone's map telemetry today — only moblin-remote's
+            // separate Python assistant implementation consumes this event, for
+            // the server-side map overlay.
+            break
         }
     }
 
@@ -748,8 +754,8 @@ class RemoteControlAssistant: NSObject {
         }
     }
 
-    private func handlePing() {
-        send(message: .pong)
+    private func handlePing(sentAt: Date) {
+        send(message: .pong(echoedSentAt: sentAt, repliedAt: Date()))
         gotPing = true
     }
 

@@ -721,6 +721,7 @@ final class Model: NSObject, ObservableObject {
     var cameraPosition: AVCaptureDevice.Position?
     private let motionManager = CMMotionManager()
     var gForceManager: GForceManager?
+    var headingManager: HeadingManager?
     var database: Database {
         settings.database
     }
@@ -808,6 +809,8 @@ final class Model: NSObject, ObservableObject {
     var moveToGimbalPresetQueueRunning = false
     var gimbalPresetLongPressTimers: [String: MainTimer] = [:]
     var latestKnownLocation: CLLocation?
+    var lastTelemetrySentAt: Date?
+    let telemetryMinIntervalS: TimeInterval = 0.2
     var slopePercent = 0.0
     var previousSlopeAltitude: Double? = 0.0
     var previousSlopeDistance = 0.0
@@ -1348,6 +1351,7 @@ final class Model: NSObject, ObservableObject {
         goPro.rtmpUrlSelection = database.goPro.selectedRtmpUrl
         replay.speed = database.replay.speed
         gForceManager = GForceManager(motionManager: motionManager)
+        headingManager = HeadingManager(motionManager: motionManager)
         startTextVariableManagers()
         chatBotCustomCommandsTextChanged()
         macrosTextFormatChanged()
@@ -1770,6 +1774,7 @@ final class Model: NSObject, ObservableObject {
         weatherManager.stop()
         geographyManager.stop()
         gForceManager?.stop()
+        headingManager?.stop()
         obsWebSocket?.stop()
         media.stopAllNetStreams()
         stopSpeechToText()
